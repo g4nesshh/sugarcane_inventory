@@ -1,0 +1,417 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  INVENTORY_MANAGER
+  PRODUCTION_MANAGER
+  STOREKEEPER
+}
+
+enum RecordStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum PurchaseStatus {
+  DRAFT
+  PENDING
+  APPROVED
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum TransferStatus {
+  PENDING
+  COMPLETED
+  REJECTED
+}
+
+enum BatchStatus {
+  PLANNED
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum CaneStatus {
+  RECEIVED
+  PARTIALLY_CRUSHED
+  CRUSHED
+}
+
+enum AdjustmentReason {
+  DAMAGED
+  EXPIRED
+  PHYSICAL_DIFFERENCE
+  CORRECTION
+  LOSS
+  OTHER
+}
+
+enum MovementType {
+  PURCHASE_RECEIPT
+  STOCK_ISSUE
+  PRODUCTION_CONSUMPTION
+  STOCK_TRANSFER_IN
+  STOCK_TRANSFER_OUT
+  ADJUSTMENT_IN
+  ADJUSTMENT_OUT
+  RETURN
+}
+
+model User {
+  id           Int          @id @default(autoincrement())
+  name         String
+  email        String       @unique
+  passwordHash String
+  role         Role
+  status       RecordStatus @default(ACTIVE)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  purchaseOrders       PurchaseOrder[]
+  goodsReceipts        GoodsReceipt[]
+  movements            StockMovement[]
+  issuesRequested      StockIssue[]      @relation("StockIssueRequester")
+  issuesApproved       StockIssue[]      @relation("StockIssueApprover")
+  adjustmentsRequested StockAdjustment[] @relation("StockAdjustmentRequester")
+  adjustmentsApproved  StockAdjustment[] @relation("StockAdjustmentApprover")
+}
+
+model Category {
+  id          Int          @id @default(autoincrement())
+  name        String       @unique
+  description String?
+  status      RecordStatus @default(ACTIVE)
+  items       Item[]
+}
+
+model Warehouse {
+  id       Int          @id @default(autoincrement())
+  name     String       @unique
+  location String?
+  manager  String?
+  capacity Decimal?     @db.Decimal(14, 3)
+  status   RecordStatus @default(ACTIVE)
+
+  inventory    Inventory[]
+  movements    StockMovement[]
+  receipts     GoodsReceipt[]
+  transfersOut StockTransfer[]         @relation("TransferSource")
+  transfersIn  StockTransfer[]         @relation("TransferDestination")
+  consumptions ProductionConsumption[]
+  caneReceipts SugarcaneReceipt[]
+  adjustments  StockAdjustment[]
+}
+
+model Supplier {
+  id            Int          @id @default(autoincrement())
+  name          String
+  contactPerson String?
+  phone         String?
+  email         String?
+  address       String?
+  gstNumber     String?
+  supplierType  String?
+  paymentTerms  String?
+  status        RecordStatus @default(ACTIVE)
+  createdAt     DateTime     @default(now())
+
+  items          Item[]
+  purchaseOrders PurchaseOrder[]
+  caneReceipts   SugarcaneReceipt[]
+}
+
+model Item {
+  id           Int          @id @default(autoincrement())
+  itemCode     String       @unique
+  name         String
+  categoryId   Int
+  supplierId   Int?
+  unit         String
+  description  String?
+  minimumStock Decimal      @default(0) @db.Decimal(14, 3)
+  maximumStock Decimal      @default(0) @db.Decimal(14, 3)
+  reorderLevel Decimal      @default(0) @db.Decimal(14, 3)
+  unitCost     Decimal      @default(0) @db.Decimal(14, 2)
+  status       RecordStatus @default(ACTIVE)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  category Category  @relation(fields: [categoryId], references: [id])
+  supplier Supplier? @relation(fields: [supplierId], references: [id])
+
+  inventory     Inventory[]
+  movements     StockMovement[]
+  poItems       PurchaseOrderItem[]
+  receiptItems  GoodsReceiptItem[]
+  issueItems    StockIssueItem[]
+  transferItems StockTransferItem[]
+  consumptions  ProductionConsumption[]
+  adjustments   StockAdjustment[]
+  caneReceipts  SugarcaneReceipt[]
+
+  @@index([categoryId])
+  @@index([name])
+}
+
+model Inventory {
+  id          Int      @id @default(autoincrement())
+  itemId      Int
+  warehouseId Int
+  quantity    Decimal  @default(0) @db.Decimal(14, 3)
+  updatedAt   DateTime @updatedAt
+
+  item      Item      @relation(fields: [itemId], references: [id])
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id])
+
+  @@unique([itemId, warehouseId])
+  @@index([warehouseId])
+}
+
+model PurchaseOrder {
+  id           Int            @id @default(autoincrement())
+  poNumber     String         @unique
+  supplierId   Int
+  orderDate    DateTime       @default(now())
+  expectedDate DateTime?
+  status       PurchaseStatus @default(DRAFT)
+  tax          Decimal        @default(0) @db.Decimal(14, 2)
+  discount     Decimal        @default(0) @db.Decimal(14, 2)
+  totalAmount  Decimal        @default(0) @db.Decimal(14, 2)
+  notes        String?
+  createdBy    Int
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  supplier Supplier            @relation(fields: [supplierId], references: [id])
+  creator  User                @relation(fields: [createdBy], references: [id])
+  items    PurchaseOrderItem[]
+  receipts GoodsReceipt[]
+
+  @@index([supplierId])
+  @@index([status])
+}
+
+model PurchaseOrderItem {
+  id               Int     @id @default(autoincrement())
+  purchaseOrderId  Int
+  itemId           Int
+  orderedQuantity  Decimal @db.Decimal(14, 3)
+  receivedQuantity Decimal @default(0) @db.Decimal(14, 3)
+  unitPrice        Decimal @db.Decimal(14, 2)
+
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  item          Item          @relation(fields: [itemId], references: [id])
+
+  @@index([purchaseOrderId])
+  @@index([itemId])
+}
+
+model GoodsReceipt {
+  id              Int      @id @default(autoincrement())
+  receiptNumber   String   @unique
+  purchaseOrderId Int
+  warehouseId     Int
+  receivedBy      Int
+  receivedAt      DateTime @default(now())
+  idempotencyKey  String?  @unique
+
+  purchaseOrder PurchaseOrder      @relation(fields: [purchaseOrderId], references: [id])
+  warehouse     Warehouse          @relation(fields: [warehouseId], references: [id])
+  receiver      User               @relation(fields: [receivedBy], references: [id])
+  items         GoodsReceiptItem[]
+
+  @@index([purchaseOrderId])
+}
+
+model GoodsReceiptItem {
+  id             Int       @id @default(autoincrement())
+  goodsReceiptId Int
+  itemId         Int
+  quantity       Decimal   @db.Decimal(14, 3)
+  batchNumber    String?
+  expiryDate     DateTime?
+
+  goodsReceipt GoodsReceipt @relation(fields: [goodsReceiptId], references: [id], onDelete: Cascade)
+  item         Item         @relation(fields: [itemId], references: [id])
+
+  @@index([goodsReceiptId])
+}
+
+model StockMovement {
+  id               Int          @id @default(autoincrement())
+  itemId           Int
+  warehouseId      Int
+  type             MovementType
+  quantity         Decimal      @db.Decimal(14, 3)
+  previousQuantity Decimal      @db.Decimal(14, 3)
+  newQuantity      Decimal      @db.Decimal(14, 3)
+  referenceType    String
+  referenceId      Int?
+  referenceNumber  String?
+  performedBy      Int
+  createdAt        DateTime     @default(now())
+  remarks          String?
+
+  item      Item      @relation(fields: [itemId], references: [id])
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id])
+  user      User      @relation(fields: [performedBy], references: [id])
+
+  @@index([itemId, createdAt])
+  @@index([warehouseId])
+  @@index([type, createdAt])
+  @@index([referenceType, referenceId])
+}
+
+model StockIssue {
+  id          Int            @id @default(autoincrement())
+  issueNumber String         @unique
+  department  String
+  purpose     String?
+  requestedBy Int
+  approvedBy  Int?
+  status      ApprovalStatus @default(PENDING)
+  issueDate   DateTime       @default(now())
+  remarks     String?
+
+  requester User             @relation("StockIssueRequester", fields: [requestedBy], references: [id])
+  approver  User?            @relation("StockIssueApprover", fields: [approvedBy], references: [id])
+  items     StockIssueItem[]
+
+  @@index([status])
+  @@index([department])
+}
+
+model StockIssueItem {
+  id           Int     @id @default(autoincrement())
+  stockIssueId Int
+  itemId       Int
+  warehouseId  Int
+  quantity     Decimal @db.Decimal(14, 3)
+
+  stockIssue StockIssue @relation(fields: [stockIssueId], references: [id], onDelete: Cascade)
+  item       Item       @relation(fields: [itemId], references: [id])
+
+  @@index([stockIssueId])
+}
+
+model StockTransfer {
+  id                     Int            @id @default(autoincrement())
+  transferNumber         String         @unique
+  sourceWarehouseId      Int
+  destinationWarehouseId Int
+  status                 TransferStatus @default(PENDING)
+  requestedBy            Int
+  approvedBy             Int?
+  createdAt              DateTime       @default(now())
+
+  source      Warehouse           @relation("TransferSource", fields: [sourceWarehouseId], references: [id])
+  destination Warehouse           @relation("TransferDestination", fields: [destinationWarehouseId], references: [id])
+  items       StockTransferItem[]
+}
+
+model StockTransferItem {
+  id         Int     @id @default(autoincrement())
+  transferId Int
+  itemId     Int
+  quantity   Decimal @db.Decimal(14, 3)
+
+  transfer StockTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  item     Item          @relation(fields: [itemId], references: [id])
+
+  @@index([transferId])
+}
+
+model StockAdjustment {
+  id               Int              @id @default(autoincrement())
+  adjustmentNumber String           @unique
+  itemId           Int
+  warehouseId      Int
+  systemQuantity   Decimal          @db.Decimal(14, 3)
+  physicalQuantity Decimal          @db.Decimal(14, 3)
+  difference       Decimal          @db.Decimal(14, 3)
+  reason           AdjustmentReason
+  remarks          String?
+  status           ApprovalStatus   @default(PENDING)
+  requestedBy      Int
+  approvedBy       Int?
+  createdAt        DateTime         @default(now())
+
+  item      Item      @relation(fields: [itemId], references: [id])
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id])
+  requester User      @relation("StockAdjustmentRequester", fields: [requestedBy], references: [id])
+  approver  User?     @relation("StockAdjustmentApprover", fields: [approvedBy], references: [id])
+
+  @@index([status])
+  @@index([warehouseId])
+}
+
+model ProductionBatch {
+  id               Int         @id @default(autoincrement())
+  batchNumber      String      @unique
+  productionDate   DateTime
+  product          String
+  quantityProduced Decimal     @default(0) @db.Decimal(14, 3)
+  status           BatchStatus @default(PLANNED)
+
+  consumptions ProductionConsumption[]
+}
+
+model ProductionConsumption {
+  id                Int      @id @default(autoincrement())
+  productionBatchId Int
+  itemId            Int
+  warehouseId       Int
+  quantityConsumed  Decimal  @db.Decimal(14, 3)
+  department        String?
+  remarks           String?
+  createdAt         DateTime @default(now())
+
+  productionBatch ProductionBatch @relation(fields: [productionBatchId], references: [id])
+  item            Item            @relation(fields: [itemId], references: [id])
+  warehouse       Warehouse       @relation(fields: [warehouseId], references: [id])
+
+  @@index([productionBatchId])
+  @@index([itemId])
+  @@index([warehouseId])
+}
+
+model SugarcaneReceipt {
+  id                Int        @id @default(autoincrement())
+  supplierId        Int
+  itemId            Int
+  warehouseId       Int
+  vehicleNumber     String
+  grossWeight       Decimal    @db.Decimal(14, 3)
+  tareWeight        Decimal    @db.Decimal(14, 3)
+  netWeight         Decimal    @db.Decimal(14, 3)
+  quality           String?
+  unloadingLocation String?
+  arrivalDate       DateTime   @default(now())
+  crushingDate      DateTime?
+  crushedQuantity   Decimal    @default(0) @db.Decimal(14, 3)
+  status            CaneStatus @default(RECEIVED)
+
+  supplier  Supplier  @relation(fields: [supplierId], references: [id])
+  item      Item      @relation(fields: [itemId], references: [id])
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id])
+
+  @@index([supplierId])
+  @@index([arrivalDate])
+  @@index([itemId])
+  @@index([warehouseId])
+}

@@ -28,4 +28,22 @@ api.interceptors.response.use(
   }
 );
 
+export const errorMessage = (error) => {
+  const data = error.response?.data;
+
+  if (data?.details?.length) {
+    return data.details.map((item) => item.message).join('. ');
+  }
+
+  if (data?.message) {
+    return data.message;
+  }
+
+  if (error.code === 'ERR_NETWORK') {
+    return 'Cannot reach the server. Check your connection.';
+  }
+
+  return 'Something went wrong. Please try again.';
+};
+
 export default api;
